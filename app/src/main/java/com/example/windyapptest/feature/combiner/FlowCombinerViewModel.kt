@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -40,43 +41,37 @@ internal class FlowCombinerViewModel : ViewModel() {
         _uiState.update { oldState -> oldState.copy(computations = "") }
 
         val numberOfFlows = uiState.value.numberOfFlows.toInt()
-        val listOfFlows = mutableListOf<Flow<String>>()
+        val listOfFlows = mutableListOf<Flow<Int>>()
         for (i in 1..numberOfFlows) {
-            listOfFlows.add(flowOf(i.toString()).onEach { delay(DELAY * i) })
+            listOfFlows.add(flowOf(i).onEach { delay(DELAY * i) })
         }
 
-        combinerJob = listOfFlows.flowCombiner { accumulation, value ->
-            if (accumulation.isNullOrBlank()) {
-                value
-            } else {
-                "$accumulation\n$value"
-            }
+        combinerJob = listOfFlows.flowCombiner(0) { accumulation, value ->
+            accumulation + value
+        }.map {
+            "Результат:\n${it.joinToString("\n")}"
         }.onEach { computations ->
-            _uiState.update { oldState -> oldState.copy(computations = "Результат:\n$computations") }
+            _uiState.update { oldState -> oldState.copy(computations = computations) }
         }.launchIn(viewModelScope)
-
-        // Несовсем понял задания можно ли было использовать операторы поэтому написал с нюля ниже вариант с операторами
-        // combinerJob = listOfFlows.merge().runningFold("") { accumulator, value ->
-        //     if (accumulator.isEmpty()) {
-        //         value
-        //     } else {
-        //         "$accumulator\n$value"
-        //     }
-        // }.onEach { computations ->
-        //     _uiState.update { oldState -> oldState.copy(computations = "Результат:\n$computations") }
-        // }.launchIn(viewModelScope)
     }
 }
 
-private fun <T> List<Flow<T>>.flowCombiner(operation: (accumulation: T?, value: T) -> T): Flow<T> {
+private fun <T> List<Flow<T>>.flowCombiner(
+    defaultValue: T,
+    operation: (accumulation: T, value: T) -> T
+): Flow<List<T>> {
     val flows = this
     return channelFlow {
-        var accumulation: T? = null
+        var accumulation: T = defaultValue
+        val accumulationList = mutableListOf<T>()
         for (flow in flows) {
             launch {
                 flow.collect { value ->
                     accumulation = operation.invoke(accumulation, value)
-                    accumulation?.let { send(it) }
+                    accumulation?.let {
+                        accumulationList.add(it)
+                        send(accumulationList)
+                    }
                 }
             }
         }
